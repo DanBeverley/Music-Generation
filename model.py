@@ -125,6 +125,28 @@ class MusicTransformerEncoderLayer(nn.Module):
        ffn_output = self.dropout(ffn_output)
        x = self.norm2(x + ffn_output)
        return x
+class MusicTransformerDecoderLayer(nn.Module):
+    def __init__(self, d_model:int,
+                 num_heads:int,
+                 dff:int, dropout_rate:float,
+                 max_seq_len:int):
+        super().__init__()
+        self.self_attn = RelativeAttention(d_model, num_heads, max_seq_len)
+        self.cross_attn = RelativeAttention(d_model, num_heads, max_seq_len)
+        self.ffn = nn.Sequential(nn.Linear(d_model, dff),
+                                 nn.ReLU(),
+                                 nn.Linear(dff, d_model))
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.norm3 = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout_rate)
+    def forward(self, x, enc_output, tgt_mask, memory_mask):
+        attn_output = self.dropout(self.self_attn(x, x, x, tgt_mask))
+        x = self.norm1(x + attn_output)
+        cross_attn_output = self.dropout(self.cross_attn(x, enc_output, enc_output, memory_mask))
+        x = self.norm2(x + cross_attn_output)
+        ffn_output = self.dropout(self.ffn(x))
+        return self.norm3(x + ffn_output)
 
 class MusicTransformer(nn.Module):
     """
@@ -150,8 +172,12 @@ class MusicTransformer(nn.Module):
         super().__init__()
         self.embedding = nn.Embedding(num_classes, d_model)
         self.pos_embedding = nn.Embedding(max_seq_len, d_model)
-        self.layers = nn.ModuleList([MusicTransformerEncoderLayer(d_model, num_heads, dff, dropout_rate)
+        self.encoder = nn.ModuleList([MusicTransformerEncoderLayer(d_model, num_heads, dff, dropout_rate,
+                                                                   max_seq_len)
                                      for _ in range(num_layers)])
+        self.decoder = nn.ModuleList([MusicTransformerDecoderLayer(d_model, num_heads, dff, dropout_rate,
+                                                                   max_seq_len)
+                                      for _ in range(num_layers)])
         self.fc = nn.Linear(d_model, num_classes)
         self.max_seq_len = max_seq_len
         self.pad_token = pad_token
@@ -162,7 +188,8 @@ class MusicTransformer(nn.Module):
         logging.basicConfig(level=logging.INFO)
 
 
-    def forward(self, x:torch.Tensor) -> torch.Tensor:
+    def forward(self, src:torch.Tensor,
+                tgt:torch.Tensor) -> torch.Tensor:
         """
         Forward pass of the Music Transformer.
 
@@ -172,18 +199,32 @@ class MusicTransformer(nn.Module):
         Returns:
             Output tensor of shape (B, T, num_classes).
         """
-        B, T = x.shape
-        pos = torch.arange(T, device=x.device).unsqueeze(0).expand(B,T)
-        x = self.embedding(x) + self.pos_embedding(pos)
+        B, T_src = src.shape
+        B, T_tgt = tgt.shape
 
-        casual_mask = torch.tril(torch.ones((T, T), device = x.device))
-        padding_mask = (x[:,:,0] != self.pad_token).unsqueeze(1).unsqueeze(2)
-        mask = casual_mask.unsqueeze(0).unsqueeze(0)*padding_mask
+        # Embedding with positional encoding
+        src_pos = torch.arange(T_src, device=src.device).unsqueeze(0).expand(B,T_src)
+        src = self.embedding(src) + self.pos_embedding(src_pos)
 
-        for i, layer in enumerate(self.layers):
-            x = layer(x, mask)
-            self.logger.debug(f"Output after layer {i+2}: {x}")
-        return self.fc(x)
+        tgt_pos = torch.arange(T_tgt, device=tgt.device).unsqueeze(0).expand(B,T_tgt)
+        tgt = self.embedding(tgt) + self.pos_embedding(tgt_pos)
+
+        # Masks
+        src_padding_mask = (src[:,:,0] != self.pad_token).unsqueeze(1).unsqueeze(2)
+
+        tgt_padding_mask = (tgt[:,:,0] != self.pad_token).unsqueeze(1).unsqueeze(2)
+        tgt_casual_mask = torch.tril(torch.ones((T_tgt, T_tgt),
+                                                device=tgt.device)).unsqueeze(0).unsqueeze(0)
+        tgt_mask = tgt_padding_mask * tgt_casual_mask
+
+        # Encode
+        for layer in self.encoder:
+            src = layer(src, src_padding_mask)
+        # Decode
+        for layer in self.decoder:
+            tgt = layer(tgt, src, tgt_mask, src_padding_mask)
+
+        return self.fc(tgt)
 
     def _init_weights(self):
         for module in self.modules():
@@ -196,3 +237,8 @@ class MusicTransformer(nn.Module):
                 nn.init.zeros_(module.bias)
 
 
+def loss_and_optimizer(model:torch.nn.Module,
+                       learning_rate:float):
+    criterion = nn.CrossEntropyLoss(ignore_index=model.pad_token)
+    optimizer = torch.optim.Adam(model.parameters(), lr = learning_rate)
+    return criterion, optimizer
