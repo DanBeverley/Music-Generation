@@ -1,4 +1,5 @@
 from typing import Optional
+import logging
 
 import torch
 import torch.nn as nn
@@ -26,6 +27,7 @@ class RelativeAttention(nn.Module):
         self.Er = nn.Parameter(torch.randn(max_seq_len*2-1, self.head_dim)) # Relative position embedding
         self.Wo = nn.Linear(d_model, d_model) # Turn the context vector to desired output dimension
 
+        self.logger = logging.getLogger(__name__)
     def forward(self, q:torch.Tensor,
                       k:torch.Tensor,
                       v:torch.Tensor,
@@ -63,6 +65,7 @@ class RelativeAttention(nn.Module):
             scores = scores.masked_fill(mask[:,:,:T,:T]==0, float('-inf'))
         attention = F.softmax(scores/(self.head_dim**.5), dim=-1)
         context = torch.matmul(attention, v).transpose(1,2).contiguous().view(B,T,self.d_model) # (B,T,d_model)
+        self.logger.debug(f"Attention weights: {attention}")
         return self.Wo(context)
 
     def _relative_shift(self, x:torch.Tensor)->torch.Tensor:
@@ -77,8 +80,8 @@ class RelativeAttention(nn.Module):
         batch_size, num_heads, seq_length, _ = x.shape
         x_padded = F.pad(x, (0,0,0,1))
         x_reshaped = x_padded.view(batch_size, num_heads, seq_length+1, seq_length)
-        sliced = x_reshaped[:,:,1:,:]
-        return sliced
+        return x_reshaped[:,:,1:,:]
+
 
 class MusicTransformerEncoderLayer(nn.Module):
    """
@@ -93,9 +96,10 @@ class MusicTransformerEncoderLayer(nn.Module):
    def __init__(self, d_model:int,
                 num_heads:int,
                 dff:int,
-                dropout_rate:float):
+                dropout_rate:float,
+                max_seq_len:int):
        super().__init__()
-       self.self_attn = RelativeAttention(d_model, num_heads)
+       self.self_attn = RelativeAttention(d_model, num_heads, max_seq_len)
        self.ffn = nn.Sequential(nn.Linear(d_model, dff),
                                 nn.ReLU(),
                                 nn.Linear(dff, d_model)) # Feed-forward upwards projection file
@@ -120,7 +124,7 @@ class MusicTransformerEncoderLayer(nn.Module):
        ffn_output = self.ffn(x)
        ffn_output = self.dropout(ffn_output)
        x = self.norm2(x + ffn_output)
-       return x  # Have not figure this out
+       return x
 
 class MusicTransformer(nn.Module):
     """
@@ -141,13 +145,22 @@ class MusicTransformer(nn.Module):
                  num_heads:int,
                  dff:int,
                  dropout_rate:float,
-                 max_seq_len:int):
+                 max_seq_len:int,
+                 pad_token:int):
         super().__init__()
         self.embedding = nn.Embedding(num_classes, d_model)
+        self.pos_embedding = nn.Embedding(max_seq_len, d_model)
         self.layers = nn.ModuleList([MusicTransformerEncoderLayer(d_model, num_heads, dff, dropout_rate)
                                      for _ in range(num_layers)])
         self.fc = nn.Linear(d_model, num_classes)
         self.max_seq_len = max_seq_len
+        self.pad_token = pad_token
+
+        self._init_weights() # Weight Initialization
+
+        self.logger = logging.getLogger(__name__)
+        logging.basicConfig(level=logging.INFO)
+
 
     def forward(self, x:torch.Tensor) -> torch.Tensor:
         """
@@ -159,14 +172,27 @@ class MusicTransformer(nn.Module):
         Returns:
             Output tensor of shape (B, T, num_classes).
         """
-        seq_len = x.size(1)
-        mask = torch.tril(torch.ones((seq_len, seq_len)), diagonal=0).unsqueeze(0).unsqueeze(0).to(x.device)
-        x = self.embedding(x)
-        for layer in self.layers:
+        B, T = x.shape
+        pos = torch.arange(T, device=x.device).unsqueeze(0).expand(B,T)
+        x = self.embedding(x) + self.pos_embedding(pos)
+
+        casual_mask = torch.tril(torch.ones((T, T), device = x.device))
+        padding_mask = (x[:,:,0] != self.pad_token).unsqueeze(1).unsqueeze(2)
+        mask = casual_mask.unsqueeze(0).unsqueeze(0)*padding_mask
+
+        for i, layer in enumerate(self.layers):
             x = layer(x, mask)
+            self.logger.debug(f"Output after layer {i+2}: {x}")
         return self.fc(x)
 
+    def _init_weights(self):
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+            elif isinstance(module, nn.LayerNorm):
+                nn.init.ones_(module.weight)
+                nn.init.zeros_(module.bias)
 
-    #TODO : Understand all nit and gritty of the model
-    # Watch transformer , attention explain with visualization
-    # Compact, and make the code more efficient, robust
+
