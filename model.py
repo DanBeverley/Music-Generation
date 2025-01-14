@@ -236,9 +236,47 @@ class MusicTransformer(nn.Module):
                 nn.init.ones_(module.weight)
                 nn.init.zeros_(module.bias)
 
+class LabelSmoothingLoss(nn.Module):
+    """
+    Cross-entropy loss with label smoothing.
+
+    Args:
+        num_classes: Number of output classes.
+        smoothing: Smoothing factor (alpha). Default is 0.1.
+        ignore_index: Index to ignore in the target.
+    """
+    def __init__(self, num_classes:int,
+                 smoothing:float=0.1,
+                 ignore_index:int=1):
+        super().__init__()
+        self.num_classes = num_classes
+        self.smoothing   = smoothing
+        self.ignore_index = ignore_index
+    def forward(self, pred, target):
+        """
+        Compute the label-smoothing loss.
+
+        Args:
+            pred: Predictions of shape (B, T, num_classes).
+            target: Ground truth of shape (B, T).
+
+        Returns:
+            Smoothed cross-entropy loss.
+        """
+        pred = pred.log_softmax(dim=-1)
+        with torch.no_grad():
+            true_dist = torch.zeros_like(pred)
+            true_dist.fill_(self.smoothing /(self.num_classes-1))
+            true_dist.scatter_(2, target.unsqueeze(-1), 1.0-self.smoothing)
+            if self.ignore_index>0:
+                true_dist.masked_fill_((target == self.ignore_index).unsqueeze(-1),0)
+        return torch.mean(torch.sum(-true_dist*pred, dim=-1))
 
 def loss_and_optimizer(model:torch.nn.Module,
-                       learning_rate:float):
-    criterion = nn.CrossEntropyLoss(ignore_index=model.pad_token)
+                       learning_rate:float,
+                       smoothing:float=0.1):
+    criterion = LabelSmoothingLoss(num_classes = model.embedding.num_embeddings,
+                                   smoothing=smoothing,
+                                   ignore_index=model.pad_token)
     optimizer = torch.optim.Adam(model.parameters(), lr = learning_rate)
     return criterion, optimizer
