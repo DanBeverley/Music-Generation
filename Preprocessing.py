@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 from typing import Dict, List
 
+from torchtoolkit.data import create_subsets
 from miditoolkit import MidiFile
 from miditok import REMI, TokenizerConfig
 from torch import LongTensor
@@ -93,4 +94,12 @@ class MaestroDataset(Dataset):
         return "No data loaded" if len(self)==0 else f"{len(self.samples)} samples"
 
 
+# Loads tokens and create data loaders for training
+tokens_paths = list(Path('/kaggle/working/preprocessedv2/').glob("**/*.json"))
+dataset = MaestroDataset(file_paths = tokens_paths
+                         , max_seq=512, min_seq=384,
+                         pad_token = 0, preprocess=True,
+                         tokenizer_config=None,
+                         output_dir=Path("/kaggle/working/"))
+subset_train, subset_valid = create_subsets(dataset, [0.3])
 
