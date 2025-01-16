@@ -272,11 +272,4 @@ class LabelSmoothingLoss(nn.Module):
                 true_dist.masked_fill_((target == self.ignore_index).unsqueeze(-1),0)
         return torch.mean(torch.sum(-true_dist*pred, dim=-1))
 
-def loss_and_optimizer(model:torch.nn.Module,
-                       learning_rate:float,
-                       smoothing:float=0.1):
-    criterion = LabelSmoothingLoss(num_classes = model.embedding.num_embeddings,
-                                   smoothing=smoothing,
-                                   ignore_index=model.pad_token)
-    optimizer = torch.optim.Adam(model.parameters(), lr = learning_rate)
-    return criterion, optimizer
+
