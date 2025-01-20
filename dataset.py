@@ -1,8 +1,7 @@
 from pathlib import Path
+from typing import Callable, Any, List, Dict, Optional
 
 from torch.utils.data import Dataset, DataLoader
-from typing import Callable, Any, List, Dict, Optional
-import os
 
 class AbstractMusicDataset(Dataset):
     """

@@ -1,8 +1,9 @@
-from model import LabelSmoothingLoss, MusicTransformer
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
+
+from model import LabelSmoothingLoss, MusicTransformer
 
 def build_music_transformer(num_classes:int,
                             config:dict):
@@ -93,7 +94,8 @@ def get_scheduler(scheduler_type:str,
 def evaluate_model(model:nn.Module,
                    dataloader:DataLoader,
                    criterion:nn.Module,
-                   metrics:dict):
+                   metrics:dict,
+                   device:torch.device):
     """
     Evaluate the model on a dataset.
 
@@ -112,11 +114,15 @@ def evaluate_model(model:nn.Module,
 
     with torch.no_grad():
         for batch in dataloader:
-            input_ids = batch["input_ids"]
-            targets = batch["labels"]
+            input_ids = batch["input_ids"].to(device)
+            targets = batch["labels"].to(device)
 
-            outputs = model(input_ids)
-            loss = criterion(outputs, targets)
+            decoder_inputs = input_ids[:,:-1]
+            decoder_targets = targets[:,1:]
+
+            outputs = model(decoder_inputs)
+            loss = criterion(outputs.view(-1, outputs.size(-1)),
+                             decoder_targets.contiguous().view(-1)).item()
             total_loss += loss.item()
 
             for name, metric_fn in metrics.items():

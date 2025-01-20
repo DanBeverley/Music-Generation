@@ -3,9 +3,10 @@ import logging
 from pathlib import Path
 from typing import Dict, List
 
-from torchtoolkit.data import create_subsets
 from miditoolkit import MidiFile
 from miditok import REMI, TokenizerConfig
+
+from torchtoolkit.data import create_subsets
 from torch import LongTensor
 from torch.utils.data import Dataset
 from tqdm import tqdm
