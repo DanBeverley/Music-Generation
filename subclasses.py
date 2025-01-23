@@ -1,7 +1,7 @@
 import json
 import logging
 from pathlib import Path
-from typing import List, Any, Dict
+from typing import List, Any, Dict, Callable
 import pandas as pd
 import os
 from mido import MidiFile
@@ -10,10 +10,9 @@ from dataset import AbstractMusicDataset
 logger = logging.getLogger(__name__)
 
 class MIDIDataset(AbstractMusicDataset):
-    def __init__(self, data_path:Path, max_seq_len:int, pad_token:int,
-                 sos_token:int, eos_token:int):
-        super().__init__(data_path, max_seq_len, pad_token,
-                         sos_token, eos_token)
+    def __init__(self, data_path:List[Path],preprocess_fn:Callable,
+                 max_seq_len:int, pad_token:int):
+        super().__init__(data_path,preprocess_fn, max_seq_len, pad_token)
     def load_data(self) ->List[MidiFile]:
         """Load MIDI file from dataset directory"""
         try:
@@ -30,14 +29,16 @@ class MIDIDataset(AbstractMusicDataset):
             return []
 
 class CSVDataset(AbstractMusicDataset):
-    def __init__(self, data_path: Path, csv_filename: str, max_seq_len: int, pad_token: int, sos_token: int, eos_token: int):
+    def __init__(self, data_path: List[Path], preprocess_fn:Callable,
+                max_seq_len: int, pad_token: int, csv_filename: str):
+        super().__init__(data_path,preprocess_fn,
+                         max_seq_len, pad_token,
+                         csv_filename = csv_filename)
         self.csv_filename = csv_filename
-        super().__init__(data_path, max_seq_len, pad_token, sos_token, eos_token)
 
-
-    def load_data(self) -> List[Dict[str, Any]]:
+    def load_data(self, csv_filename:str) -> List[Dict[str, Any]]:
         """Load a CSV file into a list of dictionaries."""
-        csv_path = self.data_path / self.csv_filename # Use Path object for joining
+        csv_path = self.data_path[0] / self.csv_filename # Use Path object for joining
         try:
             df = pd.read_csv(str(csv_path)) # Convert Path to string
             return df.to_dict(orient="records")
@@ -53,13 +54,15 @@ class CSVDataset(AbstractMusicDataset):
 
 
 class JSONDataset(AbstractMusicDataset):
-    def __init__(self, data_path: Path, json_filename: str, max_seq_len: int, pad_token: int, sos_token: int, eos_token: int):
+    def __init__(self, data_path: List[Path],preprocess_fn:Callable, max_seq_len: int,
+                 pad_token: int,json_filename: str):
+        super().__init__(data_path, preprocess_fn, max_seq_len, pad_token,
+                         json_filename=json_filename)
         self.json_filename = json_filename
-        super().__init__(data_path, max_seq_len, pad_token, sos_token, eos_token)
 
-    def load_data(self) -> List[Dict[str, Any]]:
+    def load_data(self, json_filename:str) -> List[Dict[str, Any]]:
         """Load a JSON file containing the dataset."""
-        json_path = self.data_path / self.json_filename
+        json_path = self.data_path[0] / self.json_filename
         try:
             with open(str(json_path), "r") as f: # Convert Path to str
                 return json.load(f)

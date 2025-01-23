@@ -15,14 +15,15 @@ class AbstractMusicDataset(Dataset):
     """
     def __init__(self, data_path:List[Path],
                  preprocess_fn:Callable,
-                 max_seq_len:int, pad_token:int):
+                 max_seq_len:int, pad_token:int, **kwargs):
         self.data_path = data_path
         self.preprocess_fn = preprocess_fn
         self.max_seq_len = max_seq_len
         self.pad_token = pad_token
-        self.data = self.load_data()
+        self.kwargs = kwargs
+        self.data = self.load_data(**kwargs)
 
-    def load_data(self)->List[Any]:
+    def load_data(self, **kwargs)->List[Any]:
         """Load any data from specified data path, Override this in subclasses"""
         raise NotImplementedError("Subclasses must implement this method")
 
