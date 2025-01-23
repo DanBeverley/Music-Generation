@@ -18,7 +18,7 @@ class AbstractMusicDataset(Dataset):
                  max_seq_len:int, pad_token:int):
         self.data_path = data_path
         self.preprocess_fn = preprocess_fn
-        self.max_seq_len = max_seq_len,
+        self.max_seq_len = max_seq_len
         self.pad_token = pad_token
         self.data = self.load_data()
 
