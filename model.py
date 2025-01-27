@@ -199,31 +199,35 @@ class MusicTransformer(nn.Module):
         Returns:
             Output tensor of shape (B, T, num_classes).
         """
+        # Embedding with positional encoding
+        # 1.Encoder Processing
         B, T_src = src.shape
+
+        src_pos = torch.arange(T_src, device=src.device).unsqueeze(0).expand(B, T_src)
+        src_emb = self.embedding(src) + self.pos_embedding(src_pos)
+
+        # 2.Decoder Processing
         B, T_tgt = tgt.shape
 
-        # Embedding with positional encoding
-        src_pos = torch.arange(T_src, device=src.device).unsqueeze(0).expand(B,T_src)
-        src = self.embedding(src) + self.pos_embedding(src_pos)
-
-        tgt_pos = torch.arange(T_tgt, device=tgt.device).unsqueeze(0).expand(B,T_tgt)
-        tgt = self.embedding(tgt) + self.pos_embedding(tgt_pos)
+        tgt_pos = torch.arange(T_tgt, device=tgt.device).unsqueeze(0).expand(B, T_tgt)
+        tgt_emb = self.embedding(tgt) + self.pos_embedding(tgt_pos)
 
         # Masks
-        src_padding_mask = (src[:,:,0] != self.pad_token).unsqueeze(1).unsqueeze(2)
+        src_padding_mask = (src_emb[:, :, 0] != self.pad_token).unsqueeze(1).unsqueeze(2)
 
-        tgt_padding_mask = (tgt[:,:,0] != self.pad_token).unsqueeze(1).unsqueeze(2)
+        tgt_padding_mask = (tgt_emb[:, :, 0] != self.pad_token).unsqueeze(1).unsqueeze(2)
         tgt_casual_mask = torch.tril(torch.ones((T_tgt, T_tgt),
                                                 device=tgt.device)).unsqueeze(0).unsqueeze(0)
-        tgt_mask = tgt_padding_mask * tgt_casual_mask
+        tgt_mask = tgt_padding_mask + tgt_casual_mask
 
         # Encode
+        encoder_output = src_emb
         for layer in self.encoder:
-            src = layer(src, src_padding_mask)
+            encoder_output = layer(encoder_output, src_padding_mask)
         # Decode
+        decoder_output = tgt_emb
         for layer in self.decoder:
-            tgt = layer(tgt, src, tgt_mask, src_padding_mask)
-
+            decoder_output = layer(decoder_output, encoder_output, tgt_mask, src_padding_mask)
         return self.fc(tgt)
 
     def _init_weights(self):

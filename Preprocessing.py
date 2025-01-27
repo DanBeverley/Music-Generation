@@ -110,10 +110,14 @@ class MaestroDataset(Dataset):
 
 # Loads tokens and create data loaders for training
 tokens_paths = list(Path('/kaggle/working/preprocessedv2/').glob("**/*.json"))
+tokenizer_config = TokenizerConfig(num_velocities=32, use_chords=True,
+                                   use_rests=True, use_tempose=True,
+                                   use_time_signatures=True,
+                                   beat_res=4)
 dataset = MaestroDataset(file_paths = tokens_paths
                          , max_seq=512, min_seq=384,
                          pad_token = 0, preprocess=True,
-                         tokenizer_config=None,
+                         tokenizer_config=tokenizer_config,
                          output_dir=Path("/kaggle/working/"))
 subset_train, subset_valid = create_subsets(dataset, [0.3])
 

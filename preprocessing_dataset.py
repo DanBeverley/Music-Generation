@@ -2,13 +2,15 @@ from typing import Any, Dict, List
 
 import torch
 import logging
+
+from miditok import REMI
 from pretty_midi import PrettyMIDI
 
 logger = logging.getLogger(__name__)
 
 def midi_preprocess(sample:PrettyMIDI, max_seq_len:int, pad_token:int,
-                    sos_token:int, eos_token:int,
-                    default_sample = None)->Dict[str, torch.Tensor]:
+                    sos_token:int, eos_token:int,tokenizer:REMI,
+                    default_sample = None,)->Dict[str, torch.Tensor]:
     """
     Preprocess a MIDI sample: tokenize, truncate, and pad.
 
@@ -20,29 +22,18 @@ def midi_preprocess(sample:PrettyMIDI, max_seq_len:int, pad_token:int,
         Dict[str, torch.Tensor]: Preprocessed sample with input IDs and labels.
     """
     try:
-        if not sample.instruments:
-            logger.warning("MIDI file has no instruments.")
-            return default_sample or {
-                "input_ids": torch.full((max_seq_len,), pad_token, dtype=torch.long),
-                "labels": torch.full((max_seq_len,), pad_token, dtype=torch.long)
-            }
-        tokens = []
-        for instrument in sample.instruments:
-            for note in instrument.notes:
-                tokens.append(note.pitch)
-        tokens = [sos_token] + tokens[:max_seq_len-2] + [eos_token]
-        padded_tokens = torch.nn.functional.pad(torch.tensor(tokens, dtype=torch.long),
-                                                (0, max_seq_len - len(tokens)),
-                                                value=pad_token)
-        logger.info(f"Processed MIDI file: {len(tokens)} tokens")
-        return {"input_ids":padded_tokens,
-                "labels":padded_tokens}
+        # Use REMI tokenizer for full musical representation
+        tokens = tokenizer.midi_to_tokens(sample)
+        tokens = [sos_token] + tokens[:max_seq_len - 2] + [eos_token]
+        padded_tokens = torch.nn.functional.pad(
+            torch.tensor(tokens, dtype=torch.long),
+            (0, max_seq_len - len(tokens)),
+            value=pad_token
+        )
+        return {"input_ids": padded_tokens, "labels": padded_tokens}
     except Exception as e:
-        logger.error(f"Error preprocessing MIDI: {e}")
-        return default_sample or {
-            "input_ids": torch.full((max_seq_len,), pad_token, dtype=torch.long),
-            "labels": torch.full((max_seq_len,), pad_token, dtype=torch.long)
-        }
+        logger.error(f"MIDI preprocessing failed: {e}")
+        return default_sample
 
 
 def csv_preprocess(

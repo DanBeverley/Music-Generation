@@ -72,28 +72,29 @@ if __name__ == "__main__":
     for epoch in range(training_params["num_epochs"]):
         model_.train()
         epoch_loss = 0
-        optimizer.zero_grad()
         for i, inputs in enumerate(tqdm(train_loader, desc=f"Epoch {epoch+1}/{training_params["num_epochs"]}")):
             inputs_ids = inputs["input_ids"].to(device)
             targets    = inputs["labels"].to(device)
 
             # Shift targets for autoregressive modeling
+            encoder_inputs = inputs_ids[:,:-1]
             decoder_inputs = inputs_ids[:,:-1]
             decoder_targets = targets[:,1:]
 
             # Forward Pass
             with autocast():
-                outputs = model_(decoder_inputs)
+                outputs = model_(encoder_inputs, decoder_inputs)
                 loss = criterion(outputs.view(-1, outputs.size(-1)),
                                  decoder_targets.contiguous().view(-1))/accumulation_steps
 
             # Backward pass and optimization
             scaler.scale(loss).backward()
+            torch.nn.utils.clip_grad_norm_(model_.parameters(),
+                                           max_norm=training_params["clip_value"])
             if (i+1)%accumulation_steps==0:
                 scaler.step(optimizer)
                 scaler.update()
-            torch.nn.utils.clip_grad_norm_(model_.parameters(),
-                                           max_norm=training_params["clip_value"])
+                optimizer.zero_grad()
             epoch_loss += loss.item()*accumulation_steps
 
         train_loss = epoch_loss/len(train_loader)
