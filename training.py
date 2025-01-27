@@ -5,7 +5,7 @@ import random
 import model
 from collate_fn import collate_fn
 from utils import (get_optimizer, get_loss_function,
-                   get_scheduler, evaluate_model)
+                   get_scheduler, evaluate_model, save_generated_sequence)
 from Preprocessing import subset_train, subset_valid
 
 import torch
@@ -127,6 +127,8 @@ if __name__ == "__main__":
                     if next_token.item() == model_params["pad_token"]: # Stop on pad token
                         break
                 print(f"Generated Sequence : {generated_sequence.tolist()}")
+                save_generated_sequence(generated_sequence.squeeze().tolist(),
+                                        f"generated_epoch_{epoch+1}.mid")
 
         # Save checkpoint
         torch.save(model_.state_dict(),os.path.join(data_paths["checkpoint_dir"],

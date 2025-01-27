@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from miditoolkit import MidiFile, Instrument, Note
 from torch.utils.data import DataLoader
 
 from model import LabelSmoothingLoss, MusicTransformer
@@ -147,3 +148,12 @@ def freeze_layers(model:nn.Module, freeze_embedding=True,
     for idx in freeze_layers:
         for param in model.layers[idx].parameters():
             param.requires_grad = False
+
+def save_generated_sequence(sequence, output_path):
+    midi = MidiFile()
+    track = Instrument(program=0)
+    for pitch in sequence:
+        track.notes.append(Note(velocity=64, pitch = pitch,
+                               start = 0, end=480))
+    midi.instruments.append(track)
+    midi.dump(output_path)
