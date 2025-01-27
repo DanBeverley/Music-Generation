@@ -11,6 +11,10 @@ from Preprocessing import subset_train, subset_valid
 import torch
 from tqdm import tqdm
 from torch.utils.data import DataLoader
+from torch.cuda.amp import GradScaler, autocast
+
+scaler = GradScaler()
+accumulation_steps = 4
 
 def accuracy_fn(predictions, targets, pad_token):
     """Compute accuracy of predictions"""
@@ -50,23 +54,26 @@ if __name__ == "__main__":
     scheduler = get_scheduler(scheduler_params["type"], optimizer,
                               step_size = scheduler_params["step_size"] ,
                               gamma = scheduler_params["gamma"])
+    batch_size = min(training_params["batch_size"], len(subset_train))
 
     # Dataloader
-    train_loader = DataLoader(subset_train, batch_size=training_params["batch_size"],
+    train_loader = DataLoader(subset_train, batch_size=batch_size,
                               shuffle=True, collate_fn=lambda x:collate_fn(x, model_params["pad_token"]))
-    val_loader   = DataLoader(subset_valid, batch_size=training_params["batch_size"],
+    val_loader   = DataLoader(subset_valid, batch_size=batch_size,
                               shuffle=False, collate_fn=lambda x:collate_fn(x, model_params["pad_token"]))
 
     # Metrics
     metrics = {"accuracy":accuracy_fn}
 
     # Training Loop
+    best_val_loss = float("inf")
     os.makedirs(data_paths["checkpoint_dir"], exist_ok=True)
 
     for epoch in range(training_params["num_epochs"]):
         model_.train()
         epoch_loss = 0
-        for inputs in tqdm(train_loader, desc=f"Epoch {epoch+1}/{training_params["num_epochs"]}"):
+        optimizer.zero_grad()
+        for i, inputs in enumerate(tqdm(train_loader, desc=f"Epoch {epoch+1}/{training_params["num_epochs"]}")):
             inputs_ids = inputs["input_ids"].to(device)
             targets    = inputs["labels"].to(device)
 
@@ -75,18 +82,19 @@ if __name__ == "__main__":
             decoder_targets = targets[:,1:]
 
             # Forward Pass
-            outputs = model_(decoder_inputs)
-            loss = criterion(outputs.view(-1, outputs.size(-1)),
-                             decoder_targets.contiguous().view(-1))
+            with autocast():
+                outputs = model_(decoder_inputs)
+                loss = criterion(outputs.view(-1, outputs.size(-1)),
+                                 decoder_targets.contiguous().view(-1))/accumulation_steps
 
             # Backward pass and optimization
-            optimizer.zero_grad()
-            loss.backward()
+            scaler.scale(loss).backward()
+            if (i+1)%accumulation_steps==0:
+                scaler.step(optimizer)
+                scaler.update()
             torch.nn.utils.clip_grad_norm_(model_.parameters(),
                                            max_norm=training_params["clip_value"])
-            optimizer.step()
-
-            epoch_loss += loss.item()
+            epoch_loss += loss.item()*accumulation_steps
 
         train_loss = epoch_loss/len(train_loader)
         print(f"Epoch {epoch+1} | Training Loss : {train_loss:.4f}")
@@ -97,6 +105,12 @@ if __name__ == "__main__":
                                                criterion=criterion,
                                                metrics = metrics,
                                                device = device)
+        if val_loss<best_val_loss:
+            best_val_loss=val_loss
+            torch.save(model_.state_dict(),
+                       os.path.join(data_paths["checkpoint_dir"],
+                                    "best_model.pth"))
+
         print(f"Epoch {epoch + 1} | Validating Loss: {val_loss:.4f} | Validating Metrics: {val_metrics}")
 
         # Generate and save music samples

@@ -37,6 +37,11 @@ class MaestroDataset(Dataset):
                  tokenizer_config: TokenizerConfig = None,
                  preprocess:bool=True,
                  output_dir:Path=None):
+
+        if not isinstance(file_paths, list):
+            file_paths = [file_paths]
+        file_paths = [Path(fp) for fp in file_paths]
+
         self.samples = []
         self.pad_token = pad_token
         # Preprocessing if needed
@@ -48,12 +53,20 @@ class MaestroDataset(Dataset):
     def _preprocessing_(self, file_paths:List[Path],
                               tokenizer_config:TokenizerConfig,
                               output_dir:Path):
-        output_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            output_dir = Path(output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            logger.error(f"Failed to create output directory: {e}")
+            raise
+
         for i in tqdm(file_paths, desc = "Preprocessing MIDI files"):
             try:
                 if i.suffix in ["MIDI","MID","midi","mid"]:
                     midi = MidiFile(i)
-                    tokenizer = REMI(tokenizer_config) if tokenizer_config is not None else REMI()
+                    if tokenizer_config is None:
+                        tokenizer_config = TokenizerConfig()
+                    tokenizer = REMI(tokenizer_config) if tokenizer_config is not None else REMI(tokenizer_config)
 
                     all_tracks_tokens = [tokenizer.midi_to_tokens(midi)[0].ids for track in midi.tracks if len(track)>0]
                     tokens = [token for track in all_tracks_tokens for token in track]
