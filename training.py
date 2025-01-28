@@ -89,12 +89,12 @@ if __name__ == "__main__":
 
             # Backward pass and optimization
             scaler.scale(loss).backward()
-            torch.nn.utils.clip_grad_norm_(model_.parameters(),
-                                           max_norm=training_params["clip_value"])
             if (i+1)%accumulation_steps==0:
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad()
+                torch.nn.utils.clip_grad_norm_(model_.parameters(),
+                                               max_norm=training_params["clip_value"])
             epoch_loss += loss.item()*accumulation_steps
 
         train_loss = epoch_loss/len(train_loader)
