@@ -5,7 +5,7 @@ import random
 import model
 from collate_fn import collate_fn
 from utils import (get_optimizer, get_loss_function,
-                   get_scheduler, evaluate_model, save_generated_sequence)
+                   get_scheduler, evaluate_model, save_generated_sequence, generate_sequence)
 from Preprocessing import subset_train, subset_valid
 
 import torch
@@ -115,24 +115,31 @@ if __name__ == "__main__":
         print(f"Epoch {epoch + 1} | Validating Loss: {val_loss:.4f} | Validating Metrics: {val_metrics}")
 
         # Generate and save music samples
-        if epoch%1==0: # Generate for every epoch
-            model_.eval()
-            with torch.no_grad():
-                start_sequence = torch.tensor([random.randint(1, model_params["num_classes"]-1)],
-                                              device=device).unsqueeze(0) # Random start token
-                generated_sequence = start_sequence.clone()
-                for _ in range(training_params["generation_length"]):
-                    output = model_(generated_sequence)
-                    next_token = output[:, -1, :].argmax(dim=-1, keepdim=True)
-                    generated_sequence = torch.cat([generated_sequence, next_token], dim=1)
-                    if next_token.item() == model_params["pad_token"]: # Stop on pad token
-                        break
-                print(f"Generated Sequence : {generated_sequence.tolist()}")
-                save_generated_sequence(generated_sequence.squeeze().tolist(),
-                                        f"generated_epoch_{epoch+1}.mid")
+        if epoch % 1 == 0: # Generate for every epoch
+            start_token = random.randint(1, model_params["num_classes"]-1)
+            # Exclude pad token
+            generated_seq = generate_sequence(model=model_, start_token = start_token,
+                                              max_length = training_params["generation_length"],
+                                              device = device)
+            # with torch.no_grad():
+            #     start_sequence = torch.tensor([random.randint(1, model_params["num_classes"]-1)],
+            #                                   device=device).unsqueeze(0) # Random start token
+            #     generated_sequence = start_sequence.clone()
+            #     for _ in range(training_params["generation_length"]):
+            #         output = model_(generated_sequence)
+            #         next_token = output[:, -1, :].argmax(dim=-1, keepdim=True)
+            #         generated_sequence = torch.cat([generated_sequence, next_token], dim=1)
+            #         if next_token.item() == model_params["pad_token"]: # Stop on pad token
+            #             break
+            #     print(f"Generated Sequence : {generated_sequence.tolist()}")
+            #     save_generated_sequence(generated_sequence.squeeze().tolist(),
+            #                             f"generated_epoch_{epoch+1}.mid")
+            print(f"Generated Sequence : {generated_seq}")
+            save_generated_sequence(generated_seq,
+                         f"generated_epoch_{epoch + 1}.mid")
 
         # Save checkpoint
         torch.save(model_.state_dict(),os.path.join(data_paths["checkpoint_dir"],
-                                                    f"model_epoch{epoch + 1}.pth"))
+                                                     f"model_epoch{epoch + 1}.pth"))
         scheduler.step()
 

@@ -1,3 +1,5 @@
+from typing import List
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -148,6 +150,23 @@ def freeze_layers(model:nn.Module, freeze_embedding=True,
     for idx in freeze_layers:
         for param in model.layers[idx].parameters():
             param.requires_grad = False
+
+def generate_sequence(model:nn.Module,
+                      start_token:int, max_length:int,
+                      device:torch.device)->List[int]:
+    """Auto-regressively generate a sequence"""
+    model.eval()
+    with torch.no_grad():
+        # Initialize model with start_token
+        generated = torch.tensor([[start_token]], device = device)
+        for _ in range(max_length):
+            outputs = model(generated, generated)  # Use the same sequence as the encoder/decoder
+            next_token = outputs[:,-1,:].argmax(dim=-1, keepdim=True)
+            generated = torch.cat([generated, next_token], dim=-1)
+
+            if next_token.item() == model.pad_token:
+                break
+        return generated.squeeze().tolist()
 
 def save_generated_sequence(sequence, output_path):
     midi = MidiFile()
