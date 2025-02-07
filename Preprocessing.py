@@ -42,6 +42,7 @@ class MaestroDataset(Dataset):
             file_paths = [file_paths]
         file_paths = [Path(fp) for fp in file_paths]
 
+        self.file_paths = file_paths
         self.samples = []
         self.pad_token = pad_token
         # Preprocessing if needed
