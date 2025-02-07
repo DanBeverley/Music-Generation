@@ -54,8 +54,9 @@ class MaestroDataset(Dataset):
     def _preprocessing_(self, file_paths:List[Path],
                               tokenizer_config:TokenizerConfig,
                               output_dir:Path):
-        try:
+        if not isinstance(output_dir, Path):
             output_dir = Path(output_dir)
+        try:
             output_dir.mkdir(parents=True, exist_ok=True)
         except Exception as e:
             logger.error(f"Failed to create output directory: {e}")
@@ -88,8 +89,14 @@ class MaestroDataset(Dataset):
             try:
                 with open(file_path, "r") as f:
                     data = json.load(f)
-                    tokens = data.get("ids", [])
+                    #tokens = data.get("ids", [])
+                if "ids" not in data:
+                    logger.warning(f"Invalid JSON format in {file_path.name}")
+                    continue
+                tokens = data["ids"]
+
                 if len(tokens) < min_seq:
+                    logger.debug(f"Skipping short sequence ({len(tokens)}<{min_seq})")
                     continue
                 # Create sequence with overlap
                 num_segments = len(tokens) - max_seq + 1
