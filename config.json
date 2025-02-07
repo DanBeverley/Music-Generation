@@ -15,7 +15,7 @@
         "num_epochs": 4,
         "batch_size": 32,
         "clip_value": 1.0,
-        "generation_length": 100
+        "generation_length": 512
     },
     "optimizer": "adamW",
     "loss_function": "cross_entropy",
