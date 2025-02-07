@@ -79,21 +79,23 @@ class MaestroDataset(Dataset):
             except Exception as e:
                 logger.warning(f"Error processing {i}: {e}")
 
-    def load_samples(self, file_paths:List[Path],
-                           min_seq:int,
-                           max_seq:int):
+    def load_samples(self, file_paths: List[Path],
+                     min_seq: int,
+                     max_seq: int):
         """Load tokenized samples and create sequences"""
         for file_path in tqdm(file_paths, desc="Loading tokenized files"):
             try:
                 with open(file_path, "r") as f:
-                    tokens = json.load(f)["ids"]
-                # Create fixed-length sequences
-                i = 0
-                while i<len(tokens):
-                    if i>=len(tokens)-min_seq:
-                        break
-                    self.samples.append(LongTensor(tokens[i:i+max_seq]))
-                    i+=len(self.samples[-1])
+                    data = json.load(f)
+                    tokens = data.get("ids", [])
+                if len(tokens) < min_seq:
+                    continue
+                # Create sequence with overlap
+                num_segments = len(tokens) - max_seq + 1
+                for i in range(0, num_segments, max_seq // 2):
+                    seq = tokens[i:i + max_seq]
+                    if len(seq) >= min_seq:
+                        self.samples.append(LongTensor(seq))
             except Exception as e:
                 logger.warning(f"Error loading {file_path}: {e}")
 
