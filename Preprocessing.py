@@ -51,9 +51,10 @@ class MaestroDataset(Dataset):
             file_paths = list(output_dir.glob("*.json"))
         # Load preprocessed tokens
         self.load_samples(file_paths, min_seq, max_seq)
-    def _preprocessing_(self, file_paths:List[Path],
-                              tokenizer_config:TokenizerConfig,
-                              output_dir:Path):
+
+    def _preprocessing_(self, file_paths: List[Path],
+                        tokenizer_config: TokenizerConfig,
+                        output_dir: Path):
         if not isinstance(output_dir, Path):
             output_dir = Path(output_dir)
         try:
@@ -62,24 +63,42 @@ class MaestroDataset(Dataset):
             logger.error(f"Failed to create output directory: {e}")
             raise
 
-        for i in tqdm(file_paths, desc = "Preprocessing MIDI files"):
-            try:
-                if i.suffix in ["MIDI","MID","midi","mid"]:
-                    midi = MidiFile(i)
-                    if tokenizer_config is None:
-                        tokenizer_config = TokenizerConfig()
-                    tokenizer = REMI(tokenizer_config) if tokenizer_config is not None else REMI(tokenizer_config)
+        midi_files = []
+        for path in file_paths:
+            if path.is_dir():
+                midi_files.extend(list(path.glob("**/*.midi")))
+                midi_files.extend(list(path.glob("**/*.mid")))
+            elif path.suffix.lower() in [".midi", "mid"]:
+                midi_files.append(path)
+        logger.info(f"Found {len(midi_files)} MIDI files for processing")
+        tokenizer_config = tokenizer_config or TokenizerConfig(
+            num_velocities=16,
+            use_chords=False,
+            use_rests=False,
+            use_tempos=False,
+            use_time_signatures=False
+        )
+        tokenizer = REMI(tokenizer_config)
 
-                    all_tracks_tokens = [tokenizer.midi_to_tokens(midi)[0].ids for track in midi.tracks if len(track)>0]
-                    tokens = [token for track in all_tracks_tokens for token in track]
-                else:
-                    continue # Skip non-MIDI files
-                # Save tokens to JSON
-                output_file = output_dir / f"{i.stem}_tokens.json"
+        for file in tqdm(midi_files, desc="Preprocessing MIDI files"):
+            try:
+                midi = MidiFile(str(file))
+                # Process all tracks
+                tokens = []
+                for track in midi.instruments:
+                    if len(track.notes) > 0:
+                        track_tokens = tokenizer.track_to_tokens(track)
+                        tokens.extend(track_tokens.ids)
+
+                # Save tokens
+                output_file = output_dir / f"{file.stem}_tokens.json"
                 with open(output_file, "w") as f:
-                    json.dump({"ids":tokens},f)
+                    json.dump({"ids": tokens}, f)
+                logger.debug(f"Saved {len(tokens)} tokens to {output_file}")
+
             except Exception as e:
-                logger.warning(f"Error processing {i}: {e}")
+                logger.error(f"Error processing {file}: {str(e)}")
+                raise RuntimeError(f"Failed on {file.name}") from e
 
     def load_samples(self, file_paths: List[Path],
                      min_seq: int,
