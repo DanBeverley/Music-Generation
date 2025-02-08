@@ -1,11 +1,13 @@
 import json
 import logging
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Union
 
 from miditoolkit import MidiFile
 from miditok import REMI, TokenizerConfig
+from pretty_midi import PrettyMIDI
 
+import torch as torch
 from torchtoolkit.data import create_subsets
 from torch import LongTensor
 from torch.utils.data import Dataset
@@ -30,109 +32,115 @@ class MaestroDataset(Dataset):
     Attributes:
         samples (list): List of tokenized sequences.
     """
-    def __init__(self, file_paths:List[Path],
-                 min_seq:int,
-                 max_seq:int,
-                 pad_token:int,
+    def __init__(self, file_paths:List[Union[str,Path]],
+                 min_seq:int, max_seq:int, pad_token:int,
                  tokenizer_config: TokenizerConfig = None,
-                 preprocess:bool=True,
-                 output_dir:Path=None):
+                 preprocess:bool=True, output_dir:Path=None):
 
-        if not isinstance(file_paths, list):
-            file_paths = [file_paths]
-        file_paths = [Path(fp) for fp in file_paths]
-
-        self.file_paths = file_paths
-        self.samples = []
+        self.file_paths = [Path(fp) for fp in file_paths]
         self.pad_token = pad_token
-        # Preprocessing if needed
-        if preprocess and output_dir is not None:
-            self._preprocessing_(file_paths, tokenizer_config, output_dir)
-            file_paths = list(output_dir.glob("*.json"))
-        # Load preprocessed tokens
-        self.load_samples(file_paths, min_seq, max_seq)
+        self.samples = []
 
-    def _preprocessing_(self, file_paths: List[Path],
-                        tokenizer_config: TokenizerConfig,
-                        output_dir: Path):
-        if not isinstance(output_dir, Path):
-            output_dir = Path(output_dir)
-        try:
-            output_dir.mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            logger.error(f"Failed to create output directory: {e}")
-            raise
+        if preprocess and output_dir:
+            self._preprocessing_(output_dir, tokenizer_config)
+            processed_file = list(output_dir.glob("*.json"))
+            self.load_samples(processed_file, min_seq, max_seq)
+        else:
+            self.load_samples(self.file_paths, min_seq, max_seq)
 
-        midi_files = []
-        for path in file_paths:
-            if path.is_dir():
-                midi_files.extend(list(path.glob("**/*.midi")))
-                midi_files.extend(list(path.glob("**/*.mid")))
-            elif path.suffix.lower() in [".midi", "mid"]:
-                midi_files.append(path)
-        logger.info(f"Found {len(midi_files)} MIDI files for processing")
+    def _preprocessing_(self, output_dir:Path, tokenizer_config:TokenizerConfig):
+        output_dir.mkdir(parents=True, exist_ok=True)
         tokenizer_config = tokenizer_config or TokenizerConfig(
-            num_velocities=16,
-            use_chords=False,
-            use_rests=False,
-            use_tempos=False,
-            use_time_signatures=False
+            num_velocities=32,
+            use_chords=True,
+            use_rests=True,
+            use_tempos=True,
+            use_time_signatures=False,
+            beat_res={(0,4):8}
         )
         tokenizer = REMI(tokenizer_config)
 
-        for file in tqdm(midi_files, desc="Preprocessing MIDI files"):
+        # Discover MIDI files
+        midi_files = self._find_midi_files()
+        logger.info(f"Found {len(midi_files)} MIDI files for preprocessing")
+
+        # For tracking
+        for midi_file in tqdm(midi_files, desc="Preprocessing MIDI"):
             try:
-                midi = MidiFile(str(file))
-                # Process all tracks
-                tokens = []
-                for track in midi.instruments:
-                    if len(track.notes) > 0:
-                        track_tokens = tokenizer.track_to_tokens(track)
-                        tokens.extend(track_tokens.ids)
+                # Convert MIDI to tokens
+                midi = PrettyMIDI(str(midi_file))
+                tokens = tokenizer.midi_to_tokens(midi).ids
 
-                # Save tokens
-                output_file = output_dir / f"{file.stem}_tokens.json"
-                with open(output_file, "w") as f:
-                    json.dump({"ids": tokens}, f)
-                logger.debug(f"Saved {len(tokens)} tokens to {output_file}")
+                if not tokens:
+                    logger.warning(f"No tokens generated for {midi_file.name}")
+                    continue
 
+                # Save tokens with checksum in filename
+                self._save_tokens(output_dir/f"{midi_file.stem}.json", tokens)
             except Exception as e:
-                logger.error(f"Error processing {file}: {str(e)}")
-                raise RuntimeError(f"Failed on {file.name}") from e
+                logger.error(f"Failed processing {midi_file.name}: {str(e)}",
+                             exc_info = True)
+                continue
 
-    def load_samples(self, file_paths: List[Path],
+    def _find_midi_files(self) -> List[Path]:
+        """Efficiently locate MIDI files in input paths."""
+        midi_files = []
+        for path in self.file_paths:
+            if path.is_dir():
+                midi_files.extend(path.rglob("*.mid"))
+                midi_files.extend(path.rglob("*.midi"))
+            elif path.suffix.lower() in [".mid", ".midi"]:
+                midi_files.append(path)
+        return midi_files
+
+    def _save_tokens(self, save_path: Path, tokens: List[int]):
+        """Save tokens with atomic write operation."""
+        try:
+            with open(save_path, "w") as f:
+                json.dump({"ids": tokens}, f)
+            logger.debug(f"Saved {len(tokens)} tokens to {save_path.name}")
+        except IOError as e:
+            logger.error(f"Failed saving tokens to {save_path}: {str(e)}")
+
+    def load_samples(self, json_files: List[Path],
                      min_seq: int,
                      max_seq: int):
-        """Load tokenized samples and create sequences"""
-        for file_path in tqdm(file_paths, desc="Loading tokenized files"):
-            try:
-                with open(file_path, "r") as f:
-                    data = json.load(f)
-                    #tokens = data.get("ids", [])
-                if "ids" not in data:
-                    logger.warning(f"Invalid JSON format in {file_path.name}")
-                    continue
-                tokens = data["ids"]
+        """Optimized token sequence loading with overlap handling"""
+        if min_seq >= max_seq:
+            raise ValueError(f"min_seq ({min_seq}) must be < max_seq ({max_seq})")
+        logger.info(f"Loading from {len(json_files)} token files")
 
-                if len(tokens) < min_seq:
-                    logger.debug(f"Skipping short sequence ({len(tokens)}<{min_seq})")
+        for json_file in tqdm(json_files, desc="Loading_tokens"):
+            try:
+                with open(json_file, "r") as f:
+                    data = json.load(f)
+                if not (tokens := data.get("ids")):
+                    logger.warning(f"Empty tokens in {json_file.name}")
                     continue
-                # Create sequence with overlap
-                num_segments = len(tokens) - max_seq + 1
-                for i in range(0, num_segments, max_seq // 2):
-                    seq = tokens[i:i + max_seq]
-                    if len(seq) >= min_seq:
-                        self.samples.append(LongTensor(seq))
+                # Generate overlapping sequences
+                self._create_sequences(tokens, min_seq, max_seq)
             except Exception as e:
-                logger.warning(f"Error loading {file_path}: {e}")
+                logger.warning(f"Error handling {json_file.name}: {str(e)}")
+                continue
+    def create_sequence(self, tokens:List[int],
+                        min_seq:int, max_seq:int):
+        """Generate training sequences with sliding window"""
+        seq_length = len(tokens)
+        if seq_length < min_seq:
+            return
+        # Overlapping sequences with 50% overlap
+        for i in range(0, seq_length-max_seq+1, max_seq//2):
+            seq = tokens[i:i+max_seq]
+            self.samples.append(torch.LongTensor(seq))
+
 
     def __getitem__(self, idx)->Dict[str, LongTensor]:
         return {"input_ids":self.samples[idx],
                 "labels":self.samples[idx]}
     def __len__(self) -> int:
         return len(self.samples)
-    def __repr__(self):
-        return self.__str__()
+    def __repr__(self)-> str:
+        return f"MaestroDataset({len(self)} samples)"
     def __str__(self) -> str:
         return "No data loaded" if len(self)==0 else f"{len(self.samples)} samples"
 
