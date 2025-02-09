@@ -69,7 +69,11 @@ class MaestroDataset(Dataset):
             try:
                 # Convert MIDI to tokens
                 midi = PrettyMIDI(str(midi_file))
-                tokens = tokenizer.midi_to_tokens(midi).ids
+                tokens = tokenizer.encode(midi).ids
+
+                if len(tokens)<10:
+                    logger.warning(f"Insufficient tokens ({len(tokens)}) in {midi_file.name}")
+                    continue
 
                 if not tokens:
                     logger.warning(f"No tokens generated for {midi_file.name}")
@@ -99,6 +103,9 @@ class MaestroDataset(Dataset):
             with open(save_path, "w") as f:
                 json.dump({"ids": tokens}, f)
             logger.debug(f"Saved {len(tokens)} tokens to {save_path.name}")
+
+            if not save_path.exists():
+                raise RuntimeError(f"Token file not created: {save_path}")
         except IOError as e:
             logger.error(f"Failed saving tokens to {save_path}: {str(e)}")
 
@@ -118,7 +125,7 @@ class MaestroDataset(Dataset):
                     logger.warning(f"Empty tokens in {json_file.name}")
                     continue
                 # Generate overlapping sequences
-                self._create_sequences(tokens, min_seq, max_seq)
+                self.create_sequence(tokens, min_seq, max_seq)
             except Exception as e:
                 logger.warning(f"Error handling {json_file.name}: {str(e)}")
                 continue
